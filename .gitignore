@@ -1,0 +1,11 @@
+/pothole_prediction_model.ipynb
+/datasets/potholes_cleaned.gpkg
+/datasets/potholes_final.gpkg
+/datasets/potholes_with_features.gpkg
+/datasets/potholes_with_road_assets.gpkg
+/datasets/potholes_with_target.gpkg
+/datasets/road_assets_cleaned.gpkg
+/datasets/road_condition_cleaned.csv
+/datasets/weather_cleaned.csv
+/.venv/
+/.idea/
