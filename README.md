@@ -1,169 +1,158 @@
-# Montreal Pothole Recurrence Prediction
+# Montreal Pothole Repair Failure Prediction
 
-A machine learning model to predict pothole recurrence within 6 months, enabling proactive infrastructure maintenance and resource allocation for municipal road services.
+Predicting which pothole repairs in Montreal will need to be re-repaired within 6 months, using machine learning on municipal open data.
 
-## Project Overview
+## Problem
 
-This project uses historical pothole repair data, road condition metrics, and weather patterns to predict whether a repaired pothole will require re-repair within 6 months. The model helps optimize maintenance schedules and identify high-risk road segments for preventive intervention.
+Montreal performs hundreds of thousands of pothole repairs each year. A significant portion of these repairs fail and need to be redone within months — wasting crew time, materials, and causing repeated traffic disruptions. This project builds a predictive model to identify which repairs are most likely to fail, enabling the city to allocate preventive resources more effectively.
 
-## Problem Statement
+A repair is classified as a **repeat failure** if another repair occurs within **10 meters** and **180 days** of the original.
 
-Pothole repairs are costly and disruptive. Many potholes recur within months of repair, indicating underlying road degradation. This model identifies patterns that predict recurrence, allowing cities to:
-- Prioritize roads needing deeper repairs vs. quick patches
-- Allocate maintenance budgets more effectively
-- Schedule preventive maintenance before potholes reappear
+## Results
 
-## Technologies Used
+| Model | ROC AUC | F1 (tuned) | Recall | Precision | Threshold |
+|---|---|---|---|---|---|
+| Random Forest | **0.876** | **0.831** | 0.921 | 0.757 | 0.637 |
+| HistGradient Boosting | 0.874 | 0.828 | 0.901 | 0.765 | 0.361 |
+| Logistic Regression | 0.791 | 0.770 | 0.879 | 0.685 | 0.657 |
 
-- **Python** - Core programming language
-- **scikit-learn** - Random Forest Classifier, model evaluation
-- **pandas** - Data manipulation and cleaning
-- **GeoPandas** - Geospatial data processing and spatial joins
-- **NumPy** - Numerical operations
-- **Shapely** - Geometric operations for spatial data
-- **SciPy** - Spatial indexing with cKDTree for efficient nearest-neighbor searches
-- **Jupyter Notebook** - Interactive development and analysis
+The best model (Random Forest, cost-sensitive with 3:1 FN/FP weighting) achieves **92% recall** at the tuned threshold — catching 92 out of 100 repairs that will fail — with 76% precision.
+
+![](datasets/model_results/model_comparison.png)
+
+### Feature Importance
+
+The top predictive features span multiple categories, with no single group dominating:
+
+- **Weather conditions** — temperature at repair time, rolling precipitation and freeze-thaw cycles
+- **Temporal patterns** — repair year, month, and day-of-week effects
+- **Road infrastructure** — road age, years since last resurfacing, pavement material
+- **Road condition scores** — PCI/IRI indices with temporal matching and staleness tracking
+- **Traffic volume** — average daily vehicle counts from nearby intersections
+
+### Risk Mapping
+
+The model produces spatial risk predictions at both the individual repair level and aggregated by arrondissement. Anjou, Montréal-Est, and Montréal-Nord show the highest predicted failure rates, while Westmount and Verdun show the lowest.
+
+![](datasets/model_results/risk_map_points.png)
 
 ## Data Sources
 
-The model integrates three key data sources:
-1. **Montreal Open Data** - Pothole repair records (location, date, repair type)
-2. **Montreal Road Condition Data** - Road age, surface type, pavement condition indices (PCI, IRI)
-3. **Environment Canada Weather Data** - Temperature, precipitation, freeze-thaw cycles, snow cover
+All data is publicly available from Montreal Open Data and Environment Canada:
 
-**Dataset size:** ~700,000 pothole repair records
+| Dataset | Source | Records |
+|---|---|---|
+| Pothole Repairs (2016–2025) | [Montreal Open Data](https://donnees.montreal.ca/dataset/refection-de-chaussee-par-remplissage-mecanise-de-nid-de-poule) | ~790K (after dedup) |
+| Road Infrastructure | [Montreal Open Data](https://donnees.montreal.ca/dataset/voirie-actif) | ~57K segments |
+| Road Condition (PCI/IRI) | [Montreal Open Data](https://donnees.montreal.ca/dataset/condition-chaussees-reseau-routier) | ~47K (2020–2024) |
+| Road Network (Geobase) | [Montreal Open Data](https://donnees.montreal.ca/dataset/geobase) | — |
+| Arrondissement Boundaries | [Montreal Open Data](https://donnees.montreal.ca/dataset/limites-administratives-agglomeration) | 34 polygons |
+| Daily Weather | [Environment Canada](https://dd.weather.gc.ca/today/climate/observations/daily/csv/QC/) | ~3,700 days |
+| Traffic Counts | [Montreal Open Data](https://donnees.montreal.ca/dataset/comptage-vehicules-pietons) | ~2,200 intersections |
 
-## 🔍 Features
+## Pipeline
 
-The model uses 10 engineered features:
+The project is organized as three sequential scripts:
 
-**Road Condition Metrics:**
-- `road_age` - Age of road since construction
-- `years_since_surface` - Years since last resurfacing
-- `Indice_PCI` - Pavement Condition Index (0-100 scale)
-- `Indice_IRI` - International Roughness Index (ride quality)
+### 1. `data_cleaning.py` — Data Cleaning
 
-**Weather Impact Metrics:**
-- `freeze_thaw_30d` - Number of freeze-thaw cycles in 30 days before repair
-- `freeze_thaw_60d` - Number of freeze-thaw cycles in 60 days before repair
-- `precip_30d` - Total precipitation (mm) in 30 days before repair
-- `precip_60d` - Total precipitation (mm) in 60 days before repair
-- `MeanTemp` - Average temperature during repair period
-- `SnowOnGround` - Snow accumulation (cm) at time of repair
+Loads raw datasets, standardizes formats, and exports cleaned files.
 
-**Target Variable:**
-- Binary classification: Will this pothole require re-repair within 6 months? (Yes/No)
+- Normalizes CRS to EPSG:4326 across all spatial datasets
+- Filters potholes to Montreal bounding box, removes 237K same-day/same-location duplicates
+- Preserves equipment type (`Appareil`) as a potential feature
+- Drops road condition years with no PCI/IRI (2010, 2015, 2018), keeping only 2020+
+- Fixes `SnowOnGround` encoding: summer nulls → 0, winter gaps → interpolation
+- Computes multi-year traffic averages per intersection for stability
+- Pre-computes weather rolling features (30d/60d precipitation, freeze-thaw cycles) and repair-day features
 
-## Geospatial Processing
+### 2. `feature_engineering.py` — Joins & Feature Engineering
 
-The project leverages geospatial analysis to integrate data from multiple sources:
+Joins all cleaned datasets onto pothole records and engineers the final feature set.
 
-**Spatial Matching:**
-- Used **GeoPandas** for handling spatial data (pothole locations, road networks, weather stations)
-- Implemented **cKDTree** (SciPy) for efficient nearest-neighbor searches to match:
-  - Potholes → Road segments (for road condition metrics)
-  - Potholes → Weather stations (for local weather data)
-- Performed **spatial joins** using Shapely geometry operations
+- **Target labeling**: KD-tree spatial index to find repeat repairs within 10m / 180 days
+- **Road assets**: Two-pass spatial join (15m buffer intersection → 50m nearest-neighbor fallback)
+- **Road condition**: Potholes → Geobase (for `ID_TRC`) → temporally-matched condition scores (most recent assessment *before* each repair date), with `condition_age_days` staleness feature
+- **Traffic**: Nearest-neighbor join capped at 500m (beyond that → NaN, not noisy distant values)
+- **Weather**: Exact date merge
+- **Engineered features**: `road_age`, `years_since_surface`, `repair_month`, `repair_dow`, `below_zero`, `days_since_freeze_thaw`, `has_condition_score`, `date_unknown`
 
-**Data Integration Pipeline:**
-1. Convert pothole coordinates to GeoPandas Point geometries
-2. Use cKDTree to find nearest road segment for each pothole
-3. Extract road condition features (PCI, IRI, age, surface type)
-4. Match to nearest weather station for environmental features
-5. Aggregate temporal weather data (30-day and 60-day windows)
-6. Merge all features into final training dataset
+### 3. `model_training.py` — Model Training & Evaluation
 
-This approach handles the spatial complexity of matching ~700,00 point locations to road network segments and weather stations efficiently.
+Trains and compares cost-sensitive classifiers with threshold optimization.
 
-## Model Performance
+- Compares Logistic Regression, Random Forest, and HistGradient Boosting
+- Cost-sensitive learning: class 1 (repeat) weighted 3× heavier than class 0
+- Threshold tuning via precision-recall curve to maximize F1 on positive class
+- HistGradient Boosting receives raw NaN values (native handling); other models use median imputation
+- Outputs classification reports, confusion matrices, feature importance, and comparison plots
 
-**Algorithm:** Random Forest Classifier
+### 4. `risk_mapping.py` — Risk Visualization
 
-**Results:**
-```
-Overall Accuracy: 62%
+Generates spatial risk maps from model predictions.
 
-Class 0 (No Recurrence):
-- Precision: 0.78
-- Recall: 0.68
-- F1-Score: 0.73
-
-Class 1 (Recurrence):
-- Precision: 0.30
-- Recall: 0.42
-- F1-Score: 0.35
-```
-
-**Confusion Matrix:**
-```
-                Predicted No    Predicted Yes
-Actual No          71,301         33,377
-Actual Yes         19,654         14,182
-```
-
-## Key Insights
-
-- The model correctly identifies **68% of non-recurring potholes**, reducing unnecessary deep repairs
-- **42% recall on recurring potholes** helps flag high-risk repairs for enhanced maintenance
-- Class imbalance (75% non-recurrence vs 25% recurrence) presents opportunities for improvement
-- Freeze-thaw cycles and pavement condition indices are strong predictors of recurrence
-
-## How to Run
-
-### Prerequisites
-```bash
-pip install -r requirements.txt
-```
-
-### Workflow
-The analysis is organized into sequential Jupyter notebooks:
-
-1. **`data_cleaning.ipynb`** - Load and clean raw pothole, road, and weather data
-2. **`feature_engineering.ipynb`** - Create spatial features using GeoPandas and weather aggregations
-3. **`target_setting.ipynb`** - Define target variable (6-month recurrence)
-4. **`pothole_prediction_model.ipynb`** - Train Random Forest model and evaluate performance
-
-Run notebooks in order to reproduce the full analysis pipeline.
+- Retrains best model and predicts on full dataset with geometry
+- Checks arrondissement-level variation (includes choropleth if std > 0.02)
+- **Static**: matplotlib point scatter and arrondissement choropleth (PNG)
+- **Interactive**: Folium heatmap, choropleth with tooltips, high-risk point map (HTML)
 
 ## Project Structure
+
 ```
 pothole-prediction/
-│
-├── data_cleaning.ipynb              # Data preprocessing and cleaning
-├── feature_engineering.ipynb        # Geospatial feature creation
-├── target_setting.ipynb             # Target variable definition
-├── pothole_prediction_model.ipynb   # Model training and evaluation
-├── .gitignore                       # Git ignore rules
-├── requirements.txt                 # Python dependencies
-└── README.md                        # Project documentation
+├── data_cleaning.py            # Step 1: clean raw data
+├── feature_engineering.py      # Step 2: spatial joins + features
+├── model_training.py           # Step 3: train and evaluate models
+├── risk_mapping.py             # Step 4: generate risk maps
+├── datasets/
+│   ├── pothole_fixes/          # Raw pothole CSVs and GPKGs (2016-2025)
+│   ├── road_assets/            # voirie_actif.geojson
+│   ├── road_condition/         # Auscultation CSVs (2020, 2022, 2024)
+│   ├── road_network/           # Geobase + arrondissement.geojson
+│   ├── traffic/                # Traffic counting CSVs
+│   ├── weather/                # Environment Canada daily CSVs
+│   └── model_results/          # Generated outputs
+│       ├── model_summary.csv
+│       ├── feature_importance.csv
+│       ├── model_comparison.png
+│       ├── confusion_matrices.png
+│       ├── feature_importance.png
+│       ├── risk_map_points.png
+│       ├── risk_map_arrondissement.png
+│       ├── risk_map_heatmap.html
+│       ├── risk_map_arrondissement.html
+│       ├── risk_map_high_risk_points.html
+│       └── arrondissement_risk_stats.csv
+└── README.md
 ```
 
-## Future Improvements
+## Setup
 
-- **Address class imbalance** - Implement SMOTE, class weighting, or cost-sensitive learning
-- **Feature engineering** - Add traffic volume, road type, neighborhood socioeconomic factors
-- **Model tuning** - Hyperparameter optimization via GridSearchCV, try XGBoost or LightGBM
-- **Ensemble methods** - Combine multiple models for improved predictions
-- **Deployment** - Create REST API for real-time predictions on new repairs
-- **Feature importance analysis** - Visualize which factors most influence recurrence
+```bash
+pip install pandas geopandas scikit-learn matplotlib scipy folium
+```
 
-## Real-World Applications
+Run the pipeline in order:
 
-This model can be integrated into municipal maintenance management systems to:
-- Flag high-risk repairs for follow-up inspections within 3-4 months
-- Optimize repair crew scheduling and resource allocation
-- Support capital planning for road resurfacing priorities
-- Reduce long-term maintenance costs through preventive intervention
-- Provide data-driven justification for infrastructure investment
+```bash
+python data_cleaning.py
+python feature_engineering.py
+python model_training.py
+python risk_mapping.py
+```
 
-## Data Sources & Acknowledgments
+Raw datasets should be downloaded from the sources listed above and placed in the corresponding `datasets/` subdirectories before running.
 
-- [Montreal Open Data Portal](https://donnees.montreal.ca/) - Pothole repairs and road network data
-- [Environment and Climate Change Canada](https://climate.weather.gc.ca/) - Historical weather data
-- City of Montreal - Road condition assessment metrics
+## Key Findings
 
----
+- **Weather at repair time matters most**, but unlike initial models where it dominated at 70%, the improved pipeline distributes importance more evenly across feature categories.
+- **Temporal matching of road condition data is critical.** Simply joining the latest PCI/IRI score without considering when the assessment was done relative to the repair produced near-zero signal. Proper temporal matching (most recent assessment before each repair) made these features meaningfully predictive.
+- **Data quality > model complexity.** The jump from 0.34 → 0.83 F1 on the positive class came almost entirely from better data cleaning (deduplication, coordinate filtering, SnowOnGround encoding fix, traffic distance caps) rather than from switching algorithms.
+- **Cost-sensitive framing is essential.** False negatives (missing a repair that will fail) are ~3× more costly than false positives (flagging a repair that would have held). Threshold tuning from 0.5 → 0.637 pushed recall to 92%.
+- **Spatial risk varies meaningfully by neighbourhood.** Anjou and Montréal-Nord show consistently higher predicted failure rates than Westmount and Verdun, suggesting targeted resource allocation could improve outcomes.
 
-**Developed as part of Data Science program at Concordia University**
+## Requirements
 
-*This project demonstrates end-to-end machine learning workflow including data collection, geospatial processing, feature engineering, model training, and evaluation.*
+- Python 3.9+
+- pandas, geopandas, scikit-learn, matplotlib, scipy, numpy
+- folium (for interactive maps)
