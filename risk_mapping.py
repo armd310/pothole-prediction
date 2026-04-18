@@ -23,9 +23,9 @@ import warnings
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -33,6 +33,7 @@ import geopandas as gpd
 try:
     import folium
     from folium.plugins import HeatMap
+
     HAS_FOLIUM = True
 except ImportError:
     HAS_FOLIUM = False
@@ -77,9 +78,10 @@ log = logging.getLogger(__name__)
 
 # ── Load & Retrain ──────────────────────────────────────────────────────────
 
+
 def load_data_and_train():
-    """Load model_ready.csv, retrain the best model (Random Forest),
-    and return predictions with geometry attached."""
+    """Load model_ready.csv, retrain the best model (Random Forest), and return predictions with
+    geometry attached."""
     log.info("=== Loading data and training model ===")
 
     # Load features
@@ -93,7 +95,9 @@ def load_data_and_train():
 
     # They should be the same length and order — verify
     if len(df) != len(potholes_geo):
-        log.warning(f"Row count mismatch: model_ready={len(df)}, potholes_geo={len(potholes_geo)}")
+        log.warning(
+            f"Row count mismatch: model_ready={len(df)}, potholes_geo={len(potholes_geo)}"
+        )
         log.warning("Using minimum length — rows should align by index")
         min_len = min(len(df), len(potholes_geo))
         df = df.iloc[:min_len]
@@ -103,7 +107,11 @@ def load_data_and_train():
     y = df["is_repeat"]
     X = df.drop(columns=["is_repeat"])
 
-    categorical_cols = [c for c in X.columns if X[c].dtype == "object" or c in ["equipment_type", "road_material"]]
+    categorical_cols = [
+        c
+        for c in X.columns
+        if X[c].dtype == "object" or c in ["equipment_type", "road_material"]
+    ]
     numeric_cols = [c for c in X.columns if c not in categorical_cols]
 
     # Train/test split (same seed as model_training.py for consistency)
@@ -115,17 +123,22 @@ def load_data_and_train():
     log.info("Training Random Forest...")
     preprocessor = _build_preprocessor(numeric_cols, categorical_cols)
 
-    pipe = Pipeline([
-        ("preprocess", preprocessor),
-        ("model", RandomForestClassifier(
-            n_estimators=300,
-            max_depth=15,
-            min_samples_leaf=20,
-            class_weight={0: 1, 1: FN_COST_RATIO},
-            random_state=RANDOM_STATE,
-            n_jobs=-1,
-        )),
-    ])
+    pipe = Pipeline(
+        [
+            ("preprocess", preprocessor),
+            (
+                "model",
+                RandomForestClassifier(
+                    n_estimators=300,
+                    max_depth=15,
+                    min_samples_leaf=20,
+                    class_weight={0: 1, 1: FN_COST_RATIO},
+                    random_state=RANDOM_STATE,
+                    n_jobs=-1,
+                ),
+            ),
+        ]
+    )
     pipe.fit(X_train, y_train)
 
     # Predict on ALL data (we want a risk map of everything)
@@ -150,26 +163,50 @@ def _build_preprocessor(numeric_cols, categorical_cols):
     transformers = []
     if numeric_cols:
         transformers.append(
-            ("num", Pipeline([
-                ("impute", SimpleImputer(strategy="median")),
-                ("scale", StandardScaler()),
-            ]), numeric_cols)
+            (
+                "num",
+                Pipeline(
+                    [
+                        ("impute", SimpleImputer(strategy="median")),
+                        ("scale", StandardScaler()),
+                    ]
+                ),
+                numeric_cols,
+            )
         )
     if categorical_cols:
         transformers.append(
-            ("cat", Pipeline([
-                ("impute", SimpleImputer(strategy="constant", fill_value="Unknown")),
-                ("encode", OneHotEncoder(handle_unknown="infrequent_if_exist", sparse_output=False)),
-            ]), categorical_cols)
+            (
+                "cat",
+                Pipeline(
+                    [
+                        (
+                            "impute",
+                            SimpleImputer(strategy="constant", fill_value="Unknown"),
+                        ),
+                        (
+                            "encode",
+                            OneHotEncoder(
+                                handle_unknown="infrequent_if_exist",
+                                sparse_output=False,
+                            ),
+                        ),
+                    ]
+                ),
+                categorical_cols,
+            )
         )
     return ColumnTransformer(transformers=transformers, remainder="drop")
 
 
 # ── Arrondissement Aggregation ──────────────────────────────────────────────
 
+
 def aggregate_by_arrondissement(pothole_risks: gpd.GeoDataFrame):
-    """Spatial join potholes into arrondissement polygons and compute
-    aggregate risk statistics. Returns None if variation is too low."""
+    """Spatial join potholes into arrondissement polygons and compute aggregate risk statistics.
+
+    Returns None if variation is too low.
+    """
     log.info("=== Arrondissement aggregation ===")
 
     if not ARRONDISSEMENT_PATH.exists():
@@ -190,7 +227,9 @@ def aggregate_by_arrondissement(pothole_risks: gpd.GeoDataFrame):
 
     if name_col is None:
         # Use first string column
-        str_cols = [c for c in arrond.columns if arrond[c].dtype == "object" and c != "geometry"]
+        str_cols = [
+            c for c in arrond.columns if arrond[c].dtype == "object" and c != "geometry"
+        ]
         if str_cols:
             name_col = str_cols[0]
             log.info(f"Using '{name_col}' as arrondissement name column")
@@ -208,13 +247,17 @@ def aggregate_by_arrondissement(pothole_risks: gpd.GeoDataFrame):
         joined["arrond_name"] = joined["index_right"].astype(str)
 
     # Aggregate
-    agg = joined.groupby("arrond_name").agg(
-        mean_risk=("risk_score", "mean"),
-        median_risk=("risk_score", "median"),
-        repair_count=("risk_score", "count"),
-        actual_repeat_rate=("is_repeat", "mean"),
-        high_risk_count=("risk_score", lambda x: (x > 0.6).sum()),
-    ).reset_index()
+    agg = (
+        joined.groupby("arrond_name")
+        .agg(
+            mean_risk=("risk_score", "mean"),
+            median_risk=("risk_score", "median"),
+            repair_count=("risk_score", "count"),
+            actual_repeat_rate=("is_repeat", "mean"),
+            high_risk_count=("risk_score", lambda x: (x > 0.6).sum()),
+        )
+        .reset_index()
+    )
 
     agg["high_risk_pct"] = agg["high_risk_count"] / agg["repair_count"] * 100
 
@@ -228,12 +271,16 @@ def aggregate_by_arrondissement(pothole_risks: gpd.GeoDataFrame):
         return None
 
     log.info(f"Meaningful variation detected — including arrondissement map")
-    log.info(f"\n{agg.sort_values('mean_risk', ascending=False).to_string(index=False)}")
+    log.info(
+        f"\n{agg.sort_values('mean_risk', ascending=False).to_string(index=False)}"
+    )
 
     # Merge back to polygons for mapping
     arrond_risk = arrond.merge(
-        agg, left_on=name_col if name_col else arrond.index.name,
-        right_on="arrond_name", how="left"
+        agg,
+        left_on=name_col if name_col else arrond.index.name,
+        right_on="arrond_name",
+        how="left",
     )
 
     # Save stats
@@ -244,6 +291,7 @@ def aggregate_by_arrondissement(pothole_risks: gpd.GeoDataFrame):
 
 
 # ── Static Maps ─────────────────────────────────────────────────────────────
+
 
 def plot_static_risk_map(pothole_risks: gpd.GeoDataFrame, arrond_risk=None):
     """Generate static matplotlib risk maps."""
@@ -270,13 +318,17 @@ def plot_static_risk_map(pothole_risks: gpd.GeoDataFrame, arrond_risk=None):
         cmap="RdYlGn_r",  # red = high risk, green = low risk
         s=0.3,
         alpha=0.4,
-        vmin=0, vmax=1,
+        vmin=0,
+        vmax=1,
     )
 
     cbar = plt.colorbar(scatter, ax=ax, shrink=0.6, pad=0.02)
     cbar.set_label("Predicted Repeat-Repair Probability", fontsize=12)
 
-    ax.set_title("Montreal Pothole Repair Risk Map\n(Predicted Repeat-Repair Probability)", fontsize=15)
+    ax.set_title(
+        "Montreal Pothole Repair Risk Map\n(Predicted Repeat-Repair Probability)",
+        fontsize=15,
+    )
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     ax.set_aspect("equal")
@@ -328,6 +380,7 @@ def plot_static_risk_map(pothole_risks: gpd.GeoDataFrame, arrond_risk=None):
 
 # ── Interactive Maps ────────────────────────────────────────────────────────
 
+
 def plot_interactive_risk_map(pothole_risks: gpd.GeoDataFrame, arrond_risk=None):
     """Generate interactive Folium maps."""
     if not HAS_FOLIUM:
@@ -349,8 +402,7 @@ def plot_interactive_risk_map(pothole_risks: gpd.GeoDataFrame, arrond_risk=None)
         sample = pothole_risks
 
     heat_data = [
-        [row.geometry.y, row.geometry.x, row.risk_score]
-        for _, row in sample.iterrows()
+        [row.geometry.y, row.geometry.x, row.risk_score] for _, row in sample.iterrows()
     ]
 
     HeatMap(
@@ -358,7 +410,13 @@ def plot_interactive_risk_map(pothole_risks: gpd.GeoDataFrame, arrond_risk=None)
         min_opacity=0.3,
         radius=8,
         blur=10,
-        gradient={0.2: "green", 0.4: "yellow", 0.6: "orange", 0.8: "red", 1.0: "darkred"},
+        gradient={
+            0.2: "green",
+            0.4: "yellow",
+            0.6: "orange",
+            0.8: "red",
+            1.0: "darkred",
+        },
     ).add_to(m)
 
     # Add arrondissement boundaries if available
@@ -428,7 +486,12 @@ def _add_arrondissement_layer(m, arrond_risk, show_tooltip=False):
     def style_function(feature):
         risk = feature["properties"].get("mean_risk")
         if risk is None or pd.isna(risk):
-            return {"fillColor": "#f0f0f0", "color": "#999", "weight": 1, "fillOpacity": 0.3}
+            return {
+                "fillColor": "#f0f0f0",
+                "color": "#999",
+                "weight": 1,
+                "fillOpacity": 0.3,
+            }
         color = _risk_color(risk)
         return {"fillColor": color, "color": "white", "weight": 1.5, "fillOpacity": 0.6}
 
@@ -472,6 +535,7 @@ def _risk_color(risk):
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
+
 
 def main():
     log.info("Starting risk mapping pipeline")
