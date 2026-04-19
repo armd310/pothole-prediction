@@ -349,6 +349,29 @@ def evaluate_and_save(model, X_test, y_test, feature_names):
     fig.savefig(RESULTS_DIR / "tabnet_confusion_matrices.png", dpi=150)
     plt.close(fig)
 
+    # FI Comparison
+    rf_fi = pd.read_csv(RESULTS_DIR / "feature_importance.csv").head(10)
+    tn_fi = pd.read_csv(RESULTS_DIR / "tabnet_feature_importance.csv").head(10)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    axes[0].barh(range(len(rf_fi)), rf_fi["importance"].values[::-1], color="#2196F3")
+    axes[0].set_yticks(range(len(rf_fi)))
+    axes[0].set_yticklabels(rf_fi["feature"].values[::-1])
+    axes[0].set_title("Random Forest")
+    axes[0].set_xlabel("Importance")
+
+    axes[1].barh(range(len(tn_fi)), tn_fi["importance"].values[::-1], color="#9C27B0")
+    axes[1].set_yticks(range(len(tn_fi)))
+    axes[1].set_yticklabels(tn_fi["feature"].values[::-1])
+    axes[1].set_title("TabNet")
+    axes[1].set_xlabel("Importance")
+
+    fig.suptitle("Top 10 features: tree ensemble vs attention-based model")
+    plt.tight_layout()
+    plt.savefig(RESULTS_DIR / "feature_importance_comparison.png", dpi=150)
+    plt.show()
+
     return summary_row, fi
 
 

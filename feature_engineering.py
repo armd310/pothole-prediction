@@ -5,11 +5,10 @@ Pipeline:
   1. Load cleaned datasets
   2. Label target variable (repeat repair within 180 days & 10m)
   3. Join potholes -> road assets (spatial: point-in-polygon / nearest)
-  4. Join potholes -> road condition (temporal: most recent assessment before repair)
-  5. Join potholes -> traffic (spatial: nearest intersection, max 500m)
-  6. Join potholes -> weather (date match)
-  7. Engineer final features
-  8. Export dataset
+  4. Join potholes -> traffic (spatial: nearest intersection, max 500m)
+  5. Join potholes -> weather (date match)
+  6. Engineer final features
+  7. Export dataset
 
 Output: datasets/model_ready.csv
 """
@@ -69,10 +68,6 @@ def load_datasets():
     road_assets = gpd.read_file(DATASETS_DIR / "road_assets_cleaned.gpkg")
     log.info(f"Road assets: {len(road_assets):,}")
 
-    road_condition = pd.read_csv(DATASETS_DIR / "road_condition_cleaned.csv")
-    road_condition["DateReleve"] = pd.to_datetime(road_condition["DateReleve"])
-    log.info(f"Road condition: {len(road_condition):,}")
-
     traffic = gpd.read_file(DATASETS_DIR / "traffic_cleaned.gpkg")
     log.info(f"Traffic stations: {len(traffic):,}")
 
@@ -80,7 +75,7 @@ def load_datasets():
     weather["Date"] = pd.to_datetime(weather["Date"])
     log.info(f"Weather days: {len(weather):,}")
     # Return dataframes and geodataframes for each dataset
-    return potholes, road_assets, road_condition, traffic, weather
+    return potholes, road_assets, traffic, weather
 
 
 # =================================================
@@ -442,7 +437,7 @@ def main():
     log.info("Starting feature engineering pipeline")
 
     # Load
-    potholes, road_assets, road_condition, traffic, weather = load_datasets()
+    potholes, road_assets, traffic, weather = load_datasets()
 
     # Label target
     potholes = label_repeat_repairs(potholes)

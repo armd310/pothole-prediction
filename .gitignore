@@ -1,5 +1,4 @@
 /pothole_prediction_model.ipynb
 /datasets/*
-!/datasets/model_results
 /.venv/
 /.idea/
